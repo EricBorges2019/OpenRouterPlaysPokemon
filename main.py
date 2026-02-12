@@ -1,8 +1,12 @@
 import argparse
 import logging
 import os
+from dotenv import load_dotenv
 
 from agent.simple_agent import SimpleAgent
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(

@@ -4,10 +4,15 @@ import io
 import logging
 import os
 
-from config import MAX_TOKENS, MODEL_NAME, TEMPERATURE, USE_NAVIGATOR
+from config import (
+    MAX_TOKENS, MODEL_NAME, TEMPERATURE, USE_NAVIGATOR,
+    PROMPT_CACHING_ENABLED, PROMPT_CACHE_TTL
+)
 
 from agent.emulator import Emulator
-from anthropic import Anthropic
+from openrouter import OpenRouter
+
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -25,6 +30,73 @@ def get_screenshot_base64(screenshot, upscale=1):
     buffered = io.BytesIO()
     screenshot.save(buffered, format="PNG")
     return base64.standard_b64encode(buffered.getvalue()).decode()
+
+
+def apply_cache_control(messages, enabled=True, ttl="5m"):
+    """Apply OpenRouter prompt caching breakpoints to the outgoing messages.
+
+    OpenRouter prompt caching expects `cache_control` to be attached to a *text*
+    part inside a multipart `content` list.
+
+    Strategy:
+    - Cache the stable system prompt by converting the system message into a
+      multipart content list and adding a tiny text part with `cache_control`.
+    - If a condensed conversation summary exists (our first user multipart
+      message), cache the large summary text by placing a cache_control
+      breakpoint on the *next* text part (so only the summary text is in the
+      cached prefix, not the screenshot).
+    """
+    if not enabled or not messages:
+        return messages
+
+    if ttl not in ("5m", "1h"):
+        ttl = "5m"
+
+    cache_control = {"type": "ephemeral", "ttl": ttl}
+
+    # 1) System prompt breakpoint (stable prefix)
+    for msg in messages:
+        if msg.get("role") == "system":
+            content = msg.get("content")
+            if isinstance(content, str):
+                msg["content"] = [
+                    {"type": "text", "text": content},
+                    {"type": "text", "text": "", "cache_control": cache_control},
+                ]
+            elif isinstance(content, list):
+                # Ensure there's at least one text part to attach cache_control to
+                has_text = any(isinstance(p, dict) and p.get("type") == "text" for p in content)
+                if has_text:
+                    content.append({"type": "text", "text": "", "cache_control": cache_control})
+            break
+
+    # 2) Summary breakpoint (stable prefix after summarization)
+    for msg in messages:
+        if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+            parts = msg["content"]
+            # Identify the summary text block
+            summary_idx = None
+            for i, part in enumerate(parts):
+                if isinstance(part, dict) and part.get("type") == "text":
+                    if "CONVERSATION HISTORY SUMMARY" in (part.get("text") or ""):
+                        summary_idx = i
+                        break
+
+            if summary_idx is None:
+                continue
+
+            # Place breakpoint on the next text block after the summary
+            for j in range(summary_idx + 1, len(parts)):
+                part = parts[j]
+                if isinstance(part, dict) and part.get("type") == "text":
+                    part["cache_control"] = cache_control
+                    return messages
+
+            # If no subsequent text block exists, add a tiny one as breakpoint
+            parts.insert(summary_idx + 1, {"type": "text", "text": "", "cache_control": cache_control})
+            return messages
+
+    return messages
 
 
 SYSTEM_PROMPT = """You are playing Pokemon Red. You can see the game screen and control the game by executing emulator commands.
@@ -49,47 +121,53 @@ The summary should be comprehensive enough that you can continue gameplay withou
 
 AVAILABLE_TOOLS = [
     {
-        "name": "press_buttons",
-        "description": "Press a sequence of buttons on the Game Boy.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "buttons": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": ["a", "b", "start", "select", "up", "down", "left", "right"]
+        "type": "function",
+        "function": {
+            "name": "press_buttons",
+            "description": "Press a sequence of buttons on the Game Boy.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "buttons": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["a", "b", "start", "select", "up", "down", "left", "right"]
+                        },
+                        "description": "List of buttons to press in sequence. Valid buttons: 'a', 'b', 'start', 'select', 'up', 'down', 'left', 'right'"
                     },
-                    "description": "List of buttons to press in sequence. Valid buttons: 'a', 'b', 'start', 'select', 'up', 'down', 'left', 'right'"
+                    "wait": {
+                        "type": "boolean",
+                        "description": "Whether to wait for a brief period after pressing each button. Defaults to true."
+                    }
                 },
-                "wait": {
-                    "type": "boolean",
-                    "description": "Whether to wait for a brief period after pressing each button. Defaults to true."
-                }
+                "required": ["buttons"],
             },
-            "required": ["buttons"],
-        },
+        }
     }
 ]
 
 if USE_NAVIGATOR:
     AVAILABLE_TOOLS.append({
-        "name": "navigate_to",
-        "description": "Automatically navigate to a position on the map grid. The screen is divided into a 9x10 grid, with the top-left corner as (0, 0). This tool is only available in the overworld.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "row": {
-                    "type": "integer",
-                    "description": "The row coordinate to navigate to (0-8)."
+        "type": "function",
+        "function": {
+            "name": "navigate_to",
+            "description": "Automatically navigate to a position on the map grid. The screen is divided into a 9x10 grid, with the top-left corner as (0, 0). This tool is only available in the overworld.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "row": {
+                        "type": "integer",
+                        "description": "The row coordinate to navigate to (0-8)."
+                    },
+                    "col": {
+                        "type": "integer",
+                        "description": "The column coordinate to navigate to (0-9)."
+                    }
                 },
-                "col": {
-                    "type": "integer",
-                    "description": "The column coordinate to navigate to (0-9)."
-                }
+                "required": ["row", "col"],
             },
-            "required": ["row", "col"],
-        },
+        }
     })
 
 
@@ -103,9 +181,17 @@ class SimpleAgent:
             sound: Whether to enable sound
             max_history: Maximum number of messages in history before summarization
         """
+        # Fail-fast validation of API key
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "OPENROUTER_API_KEY environment variable is not set. "
+                "Please set it with your OpenRouter API key."
+            )
+        
         self.emulator = Emulator(rom_path, headless, sound)
         self.emulator.initialize()  # Initialize the emulator
-        self.client = Anthropic()
+        self.client = OpenRouter(api_key=api_key)
         self.running = True
         self.message_history = [{"role": "user", "content": "You may now begin playing."}]
         self.max_history = max_history
@@ -115,8 +201,55 @@ class SimpleAgent:
 
     def process_tool_call(self, tool_call):
         """Process a single tool call."""
-        tool_name = tool_call.name
-        tool_input = tool_call.input
+        import json
+        tool_name = tool_call.function.name
+        
+        # DEBUG: Log the raw arguments before attempting to parse
+        logger.info(f"[DEBUG] Tool: {tool_name}")
+        logger.info(f"[DEBUG] Raw arguments type: {type(tool_call.function.arguments)}")
+        logger.info(f"[DEBUG] Raw arguments repr: {repr(tool_call.function.arguments)}")
+        logger.info(f"[DEBUG] Raw arguments value: {tool_call.function.arguments}")
+        
+        logger.debug(f"Tool call: {tool_name}, args: {tool_call.function.arguments}")
+        
+        try:
+            tool_input = json.loads(tool_call.function.arguments)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error in {tool_name} at pos {e.pos}: {e.msg}")
+            logger.error(f"Failed to parse arguments: {repr(tool_call.function.arguments)}")
+            logger.error(f"Character at error position {e.pos}: {repr(tool_call.function.arguments[e.pos:e.pos+5])}")
+            
+            # WORKAROUND: Try to extract the last valid JSON object if multiple are concatenated
+            args_str = tool_call.function.arguments
+            logger.warning(f"Attempting to extract valid JSON from malformed arguments...")
+            
+            # Find all potential JSON objects by looking for }{ patterns (where objects are concatenated)
+            # Try to parse from the rightmost valid JSON object
+            potential_objects = []
+            depth = 0
+            start = -1
+            for i, char in enumerate(args_str):
+                if char == '{':
+                    if depth == 0:
+                        start = i
+                    depth += 1
+                elif char == '}':
+                    depth -= 1
+                    if depth == 0 and start != -1:
+                        try:
+                            obj = json.loads(args_str[start:i+1])
+                            potential_objects.append(obj)
+                        except json.JSONDecodeError:
+                            pass
+            
+            if potential_objects:
+                # Use the last valid object found (likely the most complete one)
+                tool_input = potential_objects[-1]
+                logger.warning(f"Successfully extracted JSON: {tool_input}")
+            else:
+                logger.error("Could not recover valid JSON from malformed arguments")
+                raise
+        
         logger.info(f"Processing tool call: {tool_name}")
 
         if tool_name == "press_buttons":
@@ -228,62 +361,106 @@ class SimpleAgent:
             try:
                 messages = copy.deepcopy(self.message_history)
 
-                if len(messages) >= 3:
-                    if messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list) and messages[-1]["content"]:
-                        messages[-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}
-                    
-                    if len(messages) >= 5 and messages[-3]["role"] == "user" and isinstance(messages[-3]["content"], list) and messages[-3]["content"]:
-                        messages[-3]["content"][-1]["cache_control"] = {"type": "ephemeral"}
-
-
-                # Get model response
-                response = self.client.messages.create(
-                    model=MODEL_NAME,
-                    max_tokens=MAX_TOKENS,
-                    system=SYSTEM_PROMPT,
-                    messages=messages,
-                    tools=AVAILABLE_TOOLS,
-                    temperature=TEMPERATURE,
+                # Prepend system message for OpenRouter
+                messages_with_system = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+                
+                # Apply prompt caching if enabled
+                messages_with_system = apply_cache_control(
+                    messages_with_system,
+                    enabled=PROMPT_CACHING_ENABLED,
+                    ttl=PROMPT_CACHE_TTL
                 )
 
-                logger.info(f"Response usage: {response.usage}")
+                # Get model response
+                try:
+                    response = self.client.chat.send(
+                        model=MODEL_NAME,
+                        max_tokens=MAX_TOKENS,
+                        messages=messages_with_system,
+                        tools=AVAILABLE_TOOLS,
+                        temperature=TEMPERATURE,
+                    )
+                except Exception as e:
+                    # Handle pydantic validation errors from openrouter package
+                    if "validation error" in str(e).lower() and "tool_calls" in str(e).lower():
+                        logger.error(f"OpenRouter package validation error: {e}")
+                        logger.error(f"This usually means the model ({MODEL_NAME}) returned malformed tool call data")
+                        logger.error(f"Suggestions:")
+                        logger.error(f"  1. Try a different model in config.py (e.g., 'anthropic/claude-3-5-sonnet')")
+                        logger.error(f"  2. The 'openrouter/free' model may have inconsistent tool calling support")
+                        logger.error(f"  3. Check https://openrouter.ai/models for models with good tool calling support")
+                        raise
+                    else:
+                        raise
 
-                # Extract tool calls
-                tool_calls = [
-                    block for block in response.content if block.type == "tool_use"
-                ]
+                # Log usage with cache details
+                usage = response.usage
+                log_msg = f"Response usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
+                if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+                    details = usage.prompt_tokens_details
+                    if hasattr(details, 'cached_tokens') and details.cached_tokens:
+                        log_msg += f", cached={details.cached_tokens}"
+                if hasattr(usage, 'cache_write_tokens') and usage.cache_write_tokens:
+                    log_msg += f", cache_write={usage.cache_write_tokens}"
+                logger.info(log_msg)
 
+                # Extract tool calls and content from response
+                assistant_message = response.choices[0].message
+                tool_calls = assistant_message.tool_calls if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls else []
+                
+                # WORKAROUND: Filter out tool calls with None arguments (openrouter package bug)
+                if tool_calls:
+                    valid_tool_calls = []
+                    for tc in tool_calls:
+                        if hasattr(tc.function, 'arguments') and tc.function.arguments is not None:
+                            valid_tool_calls.append(tc)
+                        else:
+                            logger.warning(f"Skipping tool call {tc.function.name} with None arguments")
+                    tool_calls = valid_tool_calls
+                
                 # Display the model's reasoning
-                for block in response.content:
-                    if block.type == "text":
-                        logger.info(f"[Text] {block.text}")
-                    elif block.type == "tool_use":
-                        logger.info(f"[Tool] Using tool: {block.name}")
+                if assistant_message.content:
+                    logger.info(f"[Text] {assistant_message.content}")
+                
+                if tool_calls:
+                    for tool_call in tool_calls:
+                        logger.info(f"[Tool] Using tool: {tool_call.function.name}")
 
                 # Process tool calls
                 if tool_calls:
-                    # Add assistant message to history
-                    assistant_content = []
-                    for block in response.content:
-                        if block.type == "text":
-                            assistant_content.append({"type": "text", "text": block.text})
-                        elif block.type == "tool_use":
-                            assistant_content.append({"type": "tool_use", **dict(block)})
-                    
-                    self.message_history.append(
-                        {"role": "assistant", "content": assistant_content}
-                    )
+                    # Add assistant message to history (OpenRouter format)
+                    self.message_history.append({
+                        "role": "assistant",
+                        "content": assistant_message.content if assistant_message.content else "",
+                        "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}} for tc in tool_calls]
+                    })
                     
                     # Process tool calls and create tool results
-                    tool_results = []
+                    tool_messages = []
                     for tool_call in tool_calls:
                         tool_result = self.process_tool_call(tool_call)
-                        tool_results.append(tool_result)
+                        # Serialize tool result content properly
+                        content_parts = tool_result["content"]
+                        text_parts = []
+                        image_count = 0
+                        for part in content_parts:
+                            if part.get("type") == "text":
+                                text_parts.append(part["text"])
+                            elif part.get("type") == "image":
+                                image_count += 1
+                                # Get image data size for placeholder
+                                img_data = part.get("source", {}).get("data", "")
+                                text_parts.append(f"[Screenshot captured: {len(img_data)} bytes base64]")
+                        
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": "\n".join(text_parts)
+                        })
                     
                     # Add tool results to message history
-                    self.message_history.append(
-                        {"role": "user", "content": tool_results}
-                    )
+                    for tool_msg in tool_messages:
+                        self.message_history.append(tool_msg)
 
                     # Check if we need to summarize the history
                     if len(self.message_history) >= self.max_history:
@@ -315,37 +492,42 @@ class SimpleAgent:
         # Create messages for the summarization request - pass the entire conversation history
         messages = copy.deepcopy(self.message_history) 
 
-
-        if len(messages) >= 3:
-            if messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list) and messages[-1]["content"]:
-                messages[-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}
-            
-            if len(messages) >= 5 and messages[-3]["role"] == "user" and isinstance(messages[-3]["content"], list) and messages[-3]["content"]:
-                messages[-3]["content"][-1]["cache_control"] = {"type": "ephemeral"}
-
-        messages += [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": SUMMARY_PROMPT,
-                    }
-                ],
-            }
-        ]
+        messages.append({
+            "role": "user",
+            "content": SUMMARY_PROMPT,
+        })
         
-        # Get summary from Claude
-        response = self.client.messages.create(
+        # Prepend system message for OpenRouter
+        messages_with_system = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+        
+        # Apply prompt caching if enabled
+        messages_with_system = apply_cache_control(
+            messages_with_system,
+            enabled=PROMPT_CACHING_ENABLED,
+            ttl=PROMPT_CACHE_TTL
+        )
+        
+        # Get summary from the model
+        response = self.client.chat.send(
             model=MODEL_NAME,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=messages,
+            messages=messages_with_system,
             temperature=TEMPERATURE
         )
         
+        # Log usage with cache details
+        usage = response.usage
+        log_msg = f"Summarization usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
+        if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+            details = usage.prompt_tokens_details
+            if hasattr(details, 'cached_tokens') and details.cached_tokens:
+                log_msg += f", cached={details.cached_tokens}"
+        if hasattr(usage, 'cache_write_tokens') and usage.cache_write_tokens:
+            log_msg += f", cache_write={usage.cache_write_tokens}"
+        logger.info(log_msg)
+        
         # Extract the summary text
-        summary_text = " ".join([block.text for block in response.content if block.type == "text"])
+        summary_text = response.choices[0].message.content
         
         logger.info(f"[Agent] Game Progress Summary:")
         logger.info(f"{summary_text}")
