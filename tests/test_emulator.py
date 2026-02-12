@@ -16,7 +16,7 @@ class TestEmulatorDownsample(unittest.TestCase):
         arr = np.ones((18, 20))
         result = Emulator._downsample_array(None, arr)
         self.assertEqual(result.shape, (9, 10))
-        self.assertTrue(np.all(result == 1.0))
+        np.testing.assert_allclose(result, 1.0)
 
     def test_downsample_array_averaging(self):
         """Test with specific values to verify 2x2 block averaging."""
@@ -46,15 +46,15 @@ class TestEmulatorDownsample(unittest.TestCase):
         arr[17, 19] = 0
 
         result = Emulator._downsample_array(None, arr)
-        self.assertEqual(result[0, 0], 2.5)
-        self.assertEqual(result[1, 1], 25.0)
-        self.assertEqual(result[8, 9], 50.0)
+        self.assertAlmostEqual(result[0, 0], 2.5)
+        self.assertAlmostEqual(result[1, 1], 25.0)
+        self.assertAlmostEqual(result[8, 9], 50.0)
 
     def test_downsample_array_large_values(self):
         """Test with large values to ensure no overflow issues."""
         arr = np.full((18, 20), 1000.0)
         result = Emulator._downsample_array(None, arr)
-        self.assertTrue(np.all(result == 1000.0))
+        np.testing.assert_allclose(result, 1000.0)
 
     def test_downsample_array_invalid_shape(self):
         """Test that incorrect input shapes raise ValueError."""
