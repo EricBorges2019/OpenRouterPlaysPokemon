@@ -1,5 +1,5 @@
 # Core requirements
-openrouter
+openai
 pyboy==2.2.0       # For Pokemon emulator
 python-dotenv      # For loading .env files
 
