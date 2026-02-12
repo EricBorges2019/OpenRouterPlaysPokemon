@@ -10,7 +10,7 @@ from config import (
 )
 
 from agent.emulator import Emulator
-from openrouter import OpenRouter
+from openai import OpenAI
 
 
 
@@ -191,7 +191,10 @@ class SimpleAgent:
         
         self.emulator = Emulator(rom_path, headless, sound)
         self.emulator.initialize()  # Initialize the emulator
-        self.client = OpenRouter(api_key=api_key)
+        self.client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key
+        )
         self.running = True
         self.message_history = [{"role": "user", "content": "You may now begin playing."}]
         self.max_history = max_history
@@ -373,7 +376,7 @@ class SimpleAgent:
 
                 # Get model response
                 try:
-                    response = self.client.chat.send(
+                    response = self.client.chat.completions.create(
                         model=MODEL_NAME,
                         max_tokens=MAX_TOKENS,
                         messages=messages_with_system,
@@ -381,17 +384,7 @@ class SimpleAgent:
                         temperature=TEMPERATURE,
                     )
                 except Exception as e:
-                    # Handle pydantic validation errors from openrouter package
-                    if "validation error" in str(e).lower() and "tool_calls" in str(e).lower():
-                        logger.error(f"OpenRouter package validation error: {e}")
-                        logger.error(f"This usually means the model ({MODEL_NAME}) returned malformed tool call data")
-                        logger.error(f"Suggestions:")
-                        logger.error(f"  1. Try a different model in config.py (e.g., 'anthropic/claude-3-5-sonnet')")
-                        logger.error(f"  2. The 'openrouter/free' model may have inconsistent tool calling support")
-                        logger.error(f"  3. Check https://openrouter.ai/models for models with good tool calling support")
-                        raise
-                    else:
-                        raise
+                    raise
 
                 # Log usage with cache details
                 usage = response.usage
@@ -508,7 +501,7 @@ class SimpleAgent:
         )
         
         # Get summary from the model
-        response = self.client.chat.send(
+        response = self.client.chat.completions.create(
             model=MODEL_NAME,
             max_tokens=MAX_TOKENS,
             messages=messages_with_system,
