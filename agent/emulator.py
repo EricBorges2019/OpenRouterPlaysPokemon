@@ -1,7 +1,6 @@
 import io
 import logging
 import pickle
-from collections import deque
 import heapq
 
 from agent.memory_reader import PokemonRedReader, StatusCondition
