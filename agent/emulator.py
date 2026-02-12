@@ -120,18 +120,21 @@ class Emulator:
 
         for i in range(rows - 1):
             for j in range(cols - 1):
-                # Extract 2x2 grid
-                grid = array[i : i + 2, j : j + 2].flatten()
-
-                # Check for each direction pattern
-                if list(grid) == [0, 1, 2, 3]:
-                    return "down"
-                elif list(grid) == [4, 5, 6, 7]:
-                    return "up"
-                elif list(grid) == [9, 8, 11, 10]:
-                    return "right"
-                elif list(grid) == [8, 9, 10, 11]:
-                    return "left"
+                # Optimization: Direct indexing and early exit to avoid slicing and list creation
+                # This significantly reduces the number of temporary objects created
+                val = array[i, j]
+                if val == 0:  # Potential 'down' pattern [0, 1, 2, 3]
+                    if array[i, j+1] == 1 and array[i+1, j] == 2 and array[i+1, j+1] == 3:
+                        return "down"
+                elif val == 4:  # Potential 'up' pattern [4, 5, 6, 7]
+                    if array[i, j+1] == 5 and array[i+1, j] == 6 and array[i+1, j+1] == 7:
+                        return "up"
+                elif val == 9:  # Potential 'right' pattern [9, 8, 11, 10]
+                    if array[i, j+1] == 8 and array[i+1, j] == 11 and array[i+1, j+1] == 10:
+                        return "right"
+                elif val == 8:  # Potential 'left' pattern [8, 9, 10, 11]
+                    if array[i, j+1] == 9 and array[i+1, j] == 10 and array[i+1, j+1] == 11:
+                        return "left"
 
         return "no direction found"
 
