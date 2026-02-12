@@ -747,7 +747,7 @@ class PokemonRedReader:
         0x0C: "BURN HEAL",
         0x0D: "ICE HEAL",
         0x0E: "AWAKENING",
-        0x0F: "PARLYZ HEAL",
+        0x0F: "PARALYZE HEAL",
         0x10: "FULL RESTORE",
         0x11: "MAX POTION",
         0x12: "HYPER POTION",
