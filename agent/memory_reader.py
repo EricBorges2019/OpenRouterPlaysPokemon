@@ -731,6 +731,89 @@ class PokemonData:
 class PokemonRedReader:
     """Reads and interprets memory values from Pokemon Red"""
 
+    # Static mappings for game data to avoid recreation during frequent state extractions
+    ITEM_NAMES = {
+        0x01: "MASTER BALL",
+        0x02: "ULTRA BALL",
+        0x03: "GREAT BALL",
+        0x04: "POKé BALL",
+        0x05: "TOWN MAP",
+        0x06: "BICYCLE",
+        0x07: "???",
+        0x08: "SAFARI BALL",
+        0x09: "POKéDEX",
+        0x0A: "MOON STONE",
+        0x0B: "ANTIDOTE",
+        0x0C: "BURN HEAL",
+        0x0D: "ICE HEAL",
+        0x0E: "AWAKENING",
+        0x0F: "PARLYZ HEAL",
+        0x10: "FULL RESTORE",
+        0x11: "MAX POTION",
+        0x12: "HYPER POTION",
+        0x13: "SUPER POTION",
+        0x14: "POTION",
+        # Badges 0x15-0x1C
+        0x1D: "ESCAPE ROPE",
+        0x1E: "REPEL",
+        0x1F: "OLD AMBER",
+        0x20: "FIRE STONE",
+        0x21: "THUNDERSTONE",
+        0x22: "WATER STONE",
+        0x23: "HP UP",
+        0x24: "PROTEIN",
+        0x25: "IRON",
+        0x26: "CARBOS",
+        0x27: "CALCIUM",
+        0x28: "RARE CANDY",
+        0x29: "DOME FOSSIL",
+        0x2A: "HELIX FOSSIL",
+        0x2B: "SECRET KEY",
+        0x2C: "???",  # Blank item
+        0x2D: "BIKE VOUCHER",
+        0x2E: "X ACCURACY",
+        0x2F: "LEAF STONE",
+        0x30: "CARD KEY",
+        0x31: "NUGGET",
+        0x32: "PP UP",
+        0x33: "POKé DOLL",
+        0x34: "FULL HEAL",
+        0x35: "REVIVE",
+        0x36: "MAX REVIVE",
+        0x37: "GUARD SPEC",
+        0x38: "SUPER REPEL",
+        0x39: "MAX REPEL",
+        0x3A: "DIRE HIT",
+        0x3B: "COIN",
+        0x3C: "FRESH WATER",
+        0x3D: "SODA POP",
+        0x3E: "LEMONADE",
+        0x3F: "S.S. TICKET",
+        0x40: "GOLD TEETH",
+        0x41: "X ATTACK",
+        0x42: "X DEFEND",
+        0x43: "X SPEED",
+        0x44: "X SPECIAL",
+        0x45: "COIN CASE",
+        0x46: "OAK's PARCEL",
+        0x47: "ITEMFINDER",
+        0x48: "SILPH SCOPE",
+        0x49: "POKé FLUTE",
+        0x4A: "LIFT KEY",
+        0x4B: "EXP.ALL",
+        0x4C: "OLD ROD",
+        0x4D: "GOOD ROD",
+        0x4E: "SUPER ROD",
+        0x4F: "PP UP",
+        0x50: "ETHER",
+        0x51: "MAX ETHER",
+        0x52: "ELIXER",
+        0x53: "MAX ELIXER",
+    }
+
+    PARTY_BASE_ADDRESSES = [0xD16B, 0xD197, 0xD1C3, 0xD1EF, 0xD21B, 0xD247]
+    PARTY_NICKNAME_ADDRESSES = [0xD2B5, 0xD2C0, 0xD2CB, 0xD2D6, 0xD2E1, 0xD2EC]
+
     def __init__(self, memory_view):
         """Initialize with a PyBoy memory view object"""
         self.memory = memory_view
@@ -908,12 +991,8 @@ class PokemonRedReader:
         party = []
         party_size = self.read_party_size()
 
-        # Base addresses for party Pokemon data
-        base_addresses = [0xD16B, 0xD197, 0xD1C3, 0xD1EF, 0xD21B, 0xD247]
-        nickname_addresses = [0xD2B5, 0xD2C0, 0xD2CB, 0xD2D6, 0xD2E1, 0xD2EC]
-
         for i in range(party_size):
-            addr = base_addresses[i]
+            addr = self.PARTY_BASE_ADDRESSES[i]
 
             # Read experience (3 bytes)
             exp = (
@@ -933,7 +1012,7 @@ class PokemonRedReader:
 
             # Read nickname
             nickname = self._convert_text(
-                self.memory[nickname_addresses[i] : nickname_addresses[i] + 11]
+                self.memory[self.PARTY_NICKNAME_ADDRESSES[i] : self.PARTY_NICKNAME_ADDRESSES[i] + 11]
             )
 
             type1 = PokemonType(self.memory[addr + 5])
@@ -999,86 +1078,6 @@ class PokemonRedReader:
 
     def read_items(self) -> list[tuple[str, int]]:
         """Read all items in inventory with proper item names"""
-        # Revised mapping based on the game's internal item numbering
-        ITEM_NAMES = {
-            0x01: "MASTER BALL",
-            0x02: "ULTRA BALL",
-            0x03: "GREAT BALL",
-            0x04: "POKé BALL",
-            0x05: "TOWN MAP",
-            0x06: "BICYCLE",
-            0x07: "???",
-            0x08: "SAFARI BALL",
-            0x09: "POKéDEX",
-            0x0A: "MOON STONE",
-            0x0B: "ANTIDOTE",
-            0x0C: "BURN HEAL",
-            0x0D: "ICE HEAL",
-            0x0E: "AWAKENING",
-            0x0F: "PARLYZ HEAL",
-            0x10: "FULL RESTORE",
-            0x11: "MAX POTION",
-            0x12: "HYPER POTION",
-            0x13: "SUPER POTION",
-            0x14: "POTION",
-            # Badges 0x15-0x1C
-            0x1D: "ESCAPE ROPE",
-            0x1E: "REPEL",
-            0x1F: "OLD AMBER",
-            0x20: "FIRE STONE",
-            0x21: "THUNDERSTONE",
-            0x22: "WATER STONE",
-            0x23: "HP UP",
-            0x24: "PROTEIN",
-            0x25: "IRON",
-            0x26: "CARBOS",
-            0x27: "CALCIUM",
-            0x28: "RARE CANDY",
-            0x29: "DOME FOSSIL",
-            0x2A: "HELIX FOSSIL",
-            0x2B: "SECRET KEY",
-            0x2C: "???",  # Blank item
-            0x2D: "BIKE VOUCHER",
-            0x2E: "X ACCURACY",
-            0x2F: "LEAF STONE",
-            0x30: "CARD KEY",
-            0x31: "NUGGET",
-            0x32: "PP UP",
-            0x33: "POKé DOLL",
-            0x34: "FULL HEAL",
-            0x35: "REVIVE",
-            0x36: "MAX REVIVE",
-            0x37: "GUARD SPEC",
-            0x38: "SUPER REPEL",
-            0x39: "MAX REPEL",
-            0x3A: "DIRE HIT",
-            0x3B: "COIN",
-            0x3C: "FRESH WATER",
-            0x3D: "SODA POP",
-            0x3E: "LEMONADE",
-            0x3F: "S.S. TICKET",
-            0x40: "GOLD TEETH",
-            0x41: "X ATTACK",
-            0x42: "X DEFEND",
-            0x43: "X SPEED",
-            0x44: "X SPECIAL",
-            0x45: "COIN CASE",
-            0x46: "OAK's PARCEL",
-            0x47: "ITEMFINDER",
-            0x48: "SILPH SCOPE",
-            0x49: "POKé FLUTE",
-            0x4A: "LIFT KEY",
-            0x4B: "EXP.ALL",
-            0x4C: "OLD ROD",
-            0x4D: "GOOD ROD",
-            0x4E: "SUPER ROD",
-            0x4F: "PP UP",
-            0x50: "ETHER",
-            0x51: "MAX ETHER",
-            0x52: "ELIXER",
-            0x53: "MAX ELIXER",
-        }
-
         items = []
         count = self.read_item_count()
 
@@ -1093,8 +1092,8 @@ class PokemonRedReader:
             elif 0xC4 <= item_id <= 0xC8:
                 hm_num = item_id - 0xC3
                 item_name = f"HM{hm_num:02d}"
-            elif item_id in ITEM_NAMES:
-                item_name = ITEM_NAMES[item_id]
+            elif item_id in self.ITEM_NAMES:
+                item_name = self.ITEM_NAMES[item_id]
             else:
                 item_name = f"UNKNOWN_{item_id:02X}"
 
@@ -1108,8 +1107,8 @@ class PokemonRedReader:
         buffer_start = 0xC3A0
         buffer_end = 0xC507
 
-        # Get all bytes from the buffer
-        buffer_bytes = [self.memory[addr] for addr in range(buffer_start, buffer_end)]
+        # Get all bytes from the buffer using efficient slicing
+        buffer_bytes = self.memory[buffer_start:buffer_end]
 
         # Look for sequences of text (ignoring long sequences of 0x7F/spaces)
         text_lines = []
@@ -1198,9 +1197,7 @@ class PokemonRedReader:
         # Pokedex owned flags are stored in D2F7-D309
         # Each byte contains 8 flags for 8 Pokemon
         # Total of 19 bytes = 152 Pokemon
-        caught_count = 0
-        for addr in range(0xD2F7, 0xD30A):
-            byte = self.memory[addr]
-            # Count set bits in this byte
-            caught_count += bin(byte).count("1")
-        return caught_count
+
+        # Use efficient slicing and sum for faster bit counting
+        pokedex_bytes = self.memory[0xD2F7:0xD30A]
+        return sum(bin(byte).count("1") for byte in pokedex_bytes)
