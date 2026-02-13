@@ -1,0 +1,3 @@
+## 2025-05-15 - [Python Loop & Memory Access Optimizations]
+**Learning:** In PyBoy-based applications, accessing memory byte-by-byte in a Python loop or list comprehension is a significant bottleneck. PyBoy's `MemoryView` supports slicing which is much more efficient as it likely leverages bulk transfers. Additionally, standard Python anti-patterns like redefining large static dictionaries inside frequently called functions (e.g., game state readers) add unnecessary allocation overhead.
+**Action:** Always prefer slicing (`memory[start:end]`) for bulk reads. Move large static data structures (item maps, move sets) to class-level constants. Use direct array indexing with early exits for pattern matching instead of slicing/flattening/converting to lists.
