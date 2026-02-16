@@ -731,6 +731,128 @@ class PokemonData:
 class PokemonRedReader:
     """Reads and interprets memory values from Pokemon Red"""
 
+    # Static mappings for optimization
+    _ITEM_NAMES = {
+        0x01: "MASTER BALL",
+        0x02: "ULTRA BALL",
+        0x03: "GREAT BALL",
+        0x04: "POKé BALL",
+        0x05: "TOWN MAP",
+        0x06: "BICYCLE",
+        0x07: "???",
+        0x08: "SAFARI BALL",
+        0x09: "POKéDEX",
+        0x0A: "MOON STONE",
+        0x0B: "ANTIDOTE",
+        0x0C: "BURN HEAL",
+        0x0D: "ICE HEAL",
+        0x0E: "AWAKENING",
+        0x0F: "PARLYZ HEAL",
+        0x10: "FULL RESTORE",
+        0x11: "MAX POTION",
+        0x12: "HYPER POTION",
+        0x13: "SUPER POTION",
+        0x14: "POTION",
+        # Badges 0x15-0x1C
+        0x1D: "ESCAPE ROPE",
+        0x1E: "REPEL",
+        0x1F: "OLD AMBER",
+        0x20: "FIRE STONE",
+        0x21: "THUNDERSTONE",
+        0x22: "WATER STONE",
+        0x23: "HP UP",
+        0x24: "PROTEIN",
+        0x25: "IRON",
+        0x26: "CARBOS",
+        0x27: "CALCIUM",
+        0x28: "RARE CANDY",
+        0x29: "DOME FOSSIL",
+        0x2A: "HELIX FOSSIL",
+        0x2B: "SECRET KEY",
+        0x2C: "???",  # Blank item
+        0x2D: "BIKE VOUCHER",
+        0x2E: "X ACCURACY",
+        0x2F: "LEAF STONE",
+        0x30: "CARD KEY",
+        0x31: "NUGGET",
+        0x32: "PP UP",
+        0x33: "POKé DOLL",
+        0x34: "FULL HEAL",
+        0x35: "REVIVE",
+        0x36: "MAX REVIVE",
+        0x37: "GUARD SPEC",
+        0x38: "SUPER REPEL",
+        0x39: "MAX REPEL",
+        0x3A: "DIRE HIT",
+        0x3B: "COIN",
+        0x3C: "FRESH WATER",
+        0x3D: "SODA POP",
+        0x3E: "LEMONADE",
+        0x3F: "S.S. TICKET",
+        0x40: "GOLD TEETH",
+        0x41: "X ATTACK",
+        0x42: "X DEFEND",
+        0x43: "X SPEED",
+        0x44: "X SPECIAL",
+        0x45: "COIN CASE",
+        0x46: "OAK's PARCEL",
+        0x47: "ITEMFINDER",
+        0x48: "SILPH SCOPE",
+        0x49: "POKé FLUTE",
+        0x4A: "LIFT KEY",
+        0x4B: "EXP.ALL",
+        0x4C: "OLD ROD",
+        0x4D: "GOOD ROD",
+        0x4E: "SUPER ROD",
+        0x4F: "PP UP",
+        0x50: "ETHER",
+        0x51: "MAX ETHER",
+        0x52: "ELIXER",
+        0x53: "MAX ELIXER",
+    }
+
+    # Optimization: Pre-calculated character map for O(1) text conversion
+    _CHAR_MAP = {
+        0x4E: "\n",
+        0x54: "POKé",
+        0x6D: ":",
+        0x7F: " ",
+        0xBA: "é",
+        0xBB: "'d",
+        0xBC: "'l",
+        0xBD: "'s",
+        0xBE: "'t",
+        0xBF: "'v",
+        0xE0: "'",
+        0xE1: "Pk",
+        0xE2: "Mn",
+        0xE3: "-",
+        0xE4: "'r",
+        0xE5: "'m",
+        0xE6: "?",
+        0xE7: "!",
+        0xE8: ".",
+        0xE9: ".",
+        0xEA: "ウ",
+        0xEB: "エ",
+        0xEC: "▷",
+        0xED: "►",
+        0xEE: "▼",
+        0xEF: "♂",
+        0xF0: "♭",
+        0xF1: "×",
+        0xF2: ".",
+        0xF3: "/",
+        0xF4: ",",
+        0xF5: "♀",
+    }
+    # Add ranges to the map
+    for b in range(0x80, 0x9A): _CHAR_MAP[b] = chr(b - 0x80 + ord("A"))
+    for b in range(0xA0, 0xBA): _CHAR_MAP[b] = chr(b - 0xA0 + ord("a"))
+    for b in range(0xF6, 0x100): _CHAR_MAP[b] = str(b - 0xF6)
+    # Punctuation (9A-9F)
+    _CHAR_MAP.update({0x9A: "(", 0x9B: ")", 0x9C: ":", 0x9D: ";", 0x9E: "[", 0x9F: "]"})
+
     def __init__(self, memory_view):
         """Initialize with a PyBoy memory view object"""
         self.memory = memory_view
@@ -751,119 +873,18 @@ class PokemonRedReader:
         return money
 
     def _convert_text(self, bytes_data: list[int]) -> str:
-        """Convert Pokemon text format to ASCII"""
-        result = ""
+        """Convert Pokemon text format to ASCII using optimized dictionary lookup"""
+        result = []
         for b in bytes_data:
             if b == 0x50:  # End marker
                 break
-            elif b == 0x4E:  # Line break
-                result += "\n"
-            # Main character ranges
-            elif 0x80 <= b <= 0x99:  # A-Z
-                result += chr(b - 0x80 + ord("A"))
-            elif 0xA0 <= b <= 0xB9:  # a-z
-                result += chr(b - 0xA0 + ord("a"))
-            elif 0xF6 <= b <= 0xFF:  # Numbers 0-9
-                result += str(b - 0xF6)
-            # Punctuation characters (9A-9F)
-            elif b == 0x9A:  # (
-                result += "("
-            elif b == 0x9B:  # )
-                result += ")"
-            elif b == 0x9C:  # :
-                result += ":"
-            elif b == 0x9D:  # ;
-                result += ";"
-            elif b == 0x9E:  # [
-                result += "["
-            elif b == 0x9F:  # ]
-                result += "]"
-            # Special characters
-            elif b == 0x7F:  # Space
-                result += " "
-            elif b == 0x6D:  # : (also appears here)
-                result += ":"
-            elif b == 0x54:  # POKé control character
-                result += "POKé"
-            elif b == 0xBA:  # é
-                result += "é"
-            elif b == 0xBB:  # 'd
-                result += "'d"
-            elif b == 0xBC:  # 'l
-                result += "'l"
-            elif b == 0xBD:  # 's
-                result += "'s"
-            elif b == 0xBE:  # 't
-                result += "'t"
-            elif b == 0xBF:  # 'v
-                result += "'v"
-            elif b == 0xE1:  # PK
-                result += "Pk"
-            elif b == 0xE2:  # MN
-                result += "Mn"
-            elif b == 0xE3:  # -
-                result += "-"
-            elif b == 0xE6:  # ?
-                result += "?"
-            elif b == 0xE7:  # !
-                result += "!"
-            elif b == 0xE8:  # .
-                result += "."
-            elif b == 0xE9:  # .
-                result += "."
-            # E-register special characters
-            elif b == 0xE0:  # '
-                result += "'"
-            elif b == 0xE1:  # PK
-                result += "POKé"
-            elif b == 0xE2:  # MN
-                result += "MON"
-            elif b == 0xE3:  # -
-                result += "-"
-            elif b == 0xE4:  # 'r
-                result += "'r"
-            elif b == 0xE5:  # 'm
-                result += "'m"
-            elif b == 0xE6:  # ?
-                result += "?"
-            elif b == 0xE7:  # !
-                result += "!"
-            elif b == 0xE8:  # .
-                result += "."
-            elif b == 0xE9:  # ア
-                result += "ア"
-            elif b == 0xEA:  # ウ
-                result += "ウ"
-            elif b == 0xEB:  # エ
-                result += "エ"
-            elif b == 0xEC:  # ▷
-                result += "▷"
-            elif b == 0xED:  # ►
-                result += "►"
-            elif b == 0xEE:  # ▼
-                result += "▼"
-            elif b == 0xEF:  # ♂
-                result += "♂"
-            # F-register special characters
-            elif b == 0xF0:  # ♭
-                result += "♭"
-            elif b == 0xF1:  # ×
-                result += "×"
-            elif b == 0xF2:  # .
-                result += "."
-            elif b == 0xF3:  # /
-                result += "/"
-            elif b == 0xF4:  # ,
-                result += ","
-            elif b == 0xF5:  # ♀
-                result += "♀"
-            # Numbers 0-9 (0xF6-0xFF)
-            elif 0xF6 <= b <= 0xFF:
-                result += str(b - 0xF6)
+            char = self._CHAR_MAP.get(b)
+            if char is not None:
+                result.append(char)
             else:
                 # For debugging, show the hex value of unknown characters
-                result += f"[{b:02X}]"
-        return result.strip()
+                result.append(f"[{b:02X}]")
+        return "".join(result).strip()
 
     def read_player_name(self) -> str:
         """Read the player's name"""
@@ -999,86 +1020,6 @@ class PokemonRedReader:
 
     def read_items(self) -> list[tuple[str, int]]:
         """Read all items in inventory with proper item names"""
-        # Revised mapping based on the game's internal item numbering
-        ITEM_NAMES = {
-            0x01: "MASTER BALL",
-            0x02: "ULTRA BALL",
-            0x03: "GREAT BALL",
-            0x04: "POKé BALL",
-            0x05: "TOWN MAP",
-            0x06: "BICYCLE",
-            0x07: "???",
-            0x08: "SAFARI BALL",
-            0x09: "POKéDEX",
-            0x0A: "MOON STONE",
-            0x0B: "ANTIDOTE",
-            0x0C: "BURN HEAL",
-            0x0D: "ICE HEAL",
-            0x0E: "AWAKENING",
-            0x0F: "PARLYZ HEAL",
-            0x10: "FULL RESTORE",
-            0x11: "MAX POTION",
-            0x12: "HYPER POTION",
-            0x13: "SUPER POTION",
-            0x14: "POTION",
-            # Badges 0x15-0x1C
-            0x1D: "ESCAPE ROPE",
-            0x1E: "REPEL",
-            0x1F: "OLD AMBER",
-            0x20: "FIRE STONE",
-            0x21: "THUNDERSTONE",
-            0x22: "WATER STONE",
-            0x23: "HP UP",
-            0x24: "PROTEIN",
-            0x25: "IRON",
-            0x26: "CARBOS",
-            0x27: "CALCIUM",
-            0x28: "RARE CANDY",
-            0x29: "DOME FOSSIL",
-            0x2A: "HELIX FOSSIL",
-            0x2B: "SECRET KEY",
-            0x2C: "???",  # Blank item
-            0x2D: "BIKE VOUCHER",
-            0x2E: "X ACCURACY",
-            0x2F: "LEAF STONE",
-            0x30: "CARD KEY",
-            0x31: "NUGGET",
-            0x32: "PP UP",
-            0x33: "POKé DOLL",
-            0x34: "FULL HEAL",
-            0x35: "REVIVE",
-            0x36: "MAX REVIVE",
-            0x37: "GUARD SPEC",
-            0x38: "SUPER REPEL",
-            0x39: "MAX REPEL",
-            0x3A: "DIRE HIT",
-            0x3B: "COIN",
-            0x3C: "FRESH WATER",
-            0x3D: "SODA POP",
-            0x3E: "LEMONADE",
-            0x3F: "S.S. TICKET",
-            0x40: "GOLD TEETH",
-            0x41: "X ATTACK",
-            0x42: "X DEFEND",
-            0x43: "X SPEED",
-            0x44: "X SPECIAL",
-            0x45: "COIN CASE",
-            0x46: "OAK's PARCEL",
-            0x47: "ITEMFINDER",
-            0x48: "SILPH SCOPE",
-            0x49: "POKé FLUTE",
-            0x4A: "LIFT KEY",
-            0x4B: "EXP.ALL",
-            0x4C: "OLD ROD",
-            0x4D: "GOOD ROD",
-            0x4E: "SUPER ROD",
-            0x4F: "PP UP",
-            0x50: "ETHER",
-            0x51: "MAX ETHER",
-            0x52: "ELIXER",
-            0x53: "MAX ELIXER",
-        }
-
         items = []
         count = self.read_item_count()
 
@@ -1093,8 +1034,8 @@ class PokemonRedReader:
             elif 0xC4 <= item_id <= 0xC8:
                 hm_num = item_id - 0xC3
                 item_name = f"HM{hm_num:02d}"
-            elif item_id in ITEM_NAMES:
-                item_name = ITEM_NAMES[item_id]
+            elif item_id in self._ITEM_NAMES:
+                item_name = self._ITEM_NAMES[item_id]
             else:
                 item_name = f"UNKNOWN_{item_id:02X}"
 
@@ -1108,8 +1049,8 @@ class PokemonRedReader:
         buffer_start = 0xC3A0
         buffer_end = 0xC507
 
-        # Get all bytes from the buffer
-        buffer_bytes = [self.memory[addr] for addr in range(buffer_start, buffer_end)]
+        # Get all bytes from the buffer using optimized slice access
+        buffer_bytes = self.memory[buffer_start:buffer_end]
 
         # Look for sequences of text (ignoring long sequences of 0x7F/spaces)
         text_lines = []
@@ -1201,6 +1142,6 @@ class PokemonRedReader:
         caught_count = 0
         for addr in range(0xD2F7, 0xD30A):
             byte = self.memory[addr]
-            # Count set bits in this byte
-            caught_count += bin(byte).count("1")
+            # Count set bits in this byte using optimized int.bit_count()
+            caught_count += int(byte).bit_count()
         return caught_count
