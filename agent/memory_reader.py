@@ -1202,5 +1202,5 @@ class PokemonRedReader:
         for addr in range(0xD2F7, 0xD30A):
             byte = self.memory[addr]
             # Count set bits in this byte
-            caught_count += bin(byte).count("1")
+            caught_count += byte.bit_count()
         return caught_count
