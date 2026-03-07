@@ -1,174 +1,19 @@
-import base64
 import copy
-import io
 import logging
 import os
 
-from config import (
-    MAX_TOKENS, MODEL_NAME, TEMPERATURE, USE_NAVIGATOR,
-    PROMPT_CACHING_ENABLED, PROMPT_CACHE_TTL
-)
+from config import MAX_TOKENS, MODEL_NAME, TEMPERATURE
 
 from agent.emulator import Emulator
-from openai import OpenAI
-
+from agent.llm_client import LLMClient
+from agent.prompts import SYSTEM_PROMPT, SUMMARY_PROMPT
+from agent.tools import AVAILABLE_TOOLS
+from agent.utils import get_screenshot_base64
 
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
-
-
-def get_screenshot_base64(screenshot, upscale=1):
-    """Convert PIL image to base64 string."""
-    # Resize if needed
-    if upscale > 1:
-        new_size = (screenshot.width * upscale, screenshot.height * upscale)
-        screenshot = screenshot.resize(new_size)
-
-    # Convert to base64
-    buffered = io.BytesIO()
-    screenshot.save(buffered, format="PNG")
-    return base64.standard_b64encode(buffered.getvalue()).decode()
-
-
-def apply_cache_control(messages, enabled=True, ttl="5m"):
-    """Apply OpenRouter prompt caching breakpoints to the outgoing messages.
-
-    OpenRouter prompt caching expects `cache_control` to be attached to a *text*
-    part inside a multipart `content` list.
-
-    Strategy:
-    - Cache the stable system prompt by converting the system message into a
-      multipart content list and adding a tiny text part with `cache_control`.
-    - If a condensed conversation summary exists (our first user multipart
-      message), cache the large summary text by placing a cache_control
-      breakpoint on the *next* text part (so only the summary text is in the
-      cached prefix, not the screenshot).
-    """
-    if not enabled or not messages:
-        return messages
-
-    if ttl not in ("5m", "1h"):
-        ttl = "5m"
-
-    cache_control = {"type": "ephemeral", "ttl": ttl}
-
-    # 1) System prompt breakpoint (stable prefix)
-    for msg in messages:
-        if msg.get("role") == "system":
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = [
-                    {"type": "text", "text": content},
-                    {"type": "text", "text": "", "cache_control": cache_control},
-                ]
-            elif isinstance(content, list):
-                # Ensure there's at least one text part to attach cache_control to
-                has_text = any(isinstance(p, dict) and p.get("type") == "text" for p in content)
-                if has_text:
-                    content.append({"type": "text", "text": "", "cache_control": cache_control})
-            break
-
-    # 2) Summary breakpoint (stable prefix after summarization)
-    for msg in messages:
-        if msg.get("role") == "user" and isinstance(msg.get("content"), list):
-            parts = msg["content"]
-            # Identify the summary text block
-            summary_idx = None
-            for i, part in enumerate(parts):
-                if isinstance(part, dict) and part.get("type") == "text":
-                    if "CONVERSATION HISTORY SUMMARY" in (part.get("text") or ""):
-                        summary_idx = i
-                        break
-
-            if summary_idx is None:
-                continue
-
-            # Place breakpoint on the next text block after the summary
-            for j in range(summary_idx + 1, len(parts)):
-                part = parts[j]
-                if isinstance(part, dict) and part.get("type") == "text":
-                    part["cache_control"] = cache_control
-                    return messages
-
-            # If no subsequent text block exists, add a tiny one as breakpoint
-            parts.insert(summary_idx + 1, {"type": "text", "text": "", "cache_control": cache_control})
-            return messages
-
-    return messages
-
-
-SYSTEM_PROMPT = """You are playing Pokemon Red. You can see the game screen and control the game by executing emulator commands.
-
-Your goal is to play through Pokemon Red and eventually defeat the Elite Four. Make decisions based on what you see on the screen.
-
-Before each action, explain your reasoning briefly, then use the emulator tool to execute your chosen commands.
-
-The conversation history may occasionally be summarized to save context space. If you see a message labeled "CONVERSATION HISTORY SUMMARY", this contains the key information about your progress so far. Use this information to maintain continuity in your gameplay."""
-
-SUMMARY_PROMPT = """I need you to create a detailed summary of our conversation history up to this point. This summary will replace the full conversation history to manage the context window.
-
-Please include:
-1. Key game events and milestones you've reached
-2. Important decisions you've made
-3. Current objectives or goals you're working toward
-4. Your current location and Pokémon team status
-5. Any strategies or plans you've mentioned
-
-The summary should be comprehensive enough that you can continue gameplay without losing important context about what has happened so far."""
-
-
-AVAILABLE_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "press_buttons",
-            "description": "Press a sequence of buttons on the Game Boy.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "buttons": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "enum": ["a", "b", "start", "select", "up", "down", "left", "right"]
-                        },
-                        "description": "List of buttons to press in sequence. Valid buttons: 'a', 'b', 'start', 'select', 'up', 'down', 'left', 'right'"
-                    },
-                    "wait": {
-                        "type": "boolean",
-                        "description": "Whether to wait for a brief period after pressing each button. Defaults to true."
-                    }
-                },
-                "required": ["buttons"],
-            },
-        }
-    }
-]
-
-if USE_NAVIGATOR:
-    AVAILABLE_TOOLS.append({
-        "type": "function",
-        "function": {
-            "name": "navigate_to",
-            "description": "Automatically navigate to a position on the map grid. The screen is divided into a 9x10 grid, with the top-left corner as (0, 0). This tool is only available in the overworld.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "row": {
-                        "type": "integer",
-                        "description": "The row coordinate to navigate to (0-8)."
-                    },
-                    "col": {
-                        "type": "integer",
-                        "description": "The column coordinate to navigate to (0-9)."
-                    }
-                },
-                "required": ["row", "col"],
-            },
-        }
-    })
 
 
 class SimpleAgent:
@@ -181,20 +26,9 @@ class SimpleAgent:
             sound: Whether to enable sound
             max_history: Maximum number of messages in history before summarization
         """
-        # Fail-fast validation of API key
-        api_key = os.environ.get("OPENROUTER_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OPENROUTER_API_KEY environment variable is not set. "
-                "Please set it with your OpenRouter API key."
-            )
-        
         self.emulator = Emulator(rom_path, headless, sound)
         self.emulator.initialize()  # Initialize the emulator
-        self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key
-        )
+        self.client = LLMClient()
         self.running = True
         self.message_history = [{"role": "user", "content": "You may now begin playing."}]
         self.max_history = max_history
@@ -367,21 +201,11 @@ class SimpleAgent:
                 # Prepend system message for OpenRouter
                 messages_with_system = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
                 
-                # Apply prompt caching if enabled
-                messages_with_system = apply_cache_control(
-                    messages_with_system,
-                    enabled=PROMPT_CACHING_ENABLED,
-                    ttl=PROMPT_CACHE_TTL
-                )
-
-                # Get model response
+                # LLMClient handles caching
                 try:
-                    response = self.client.chat.completions.create(
-                        model=MODEL_NAME,
-                        max_tokens=MAX_TOKENS,
+                    response = self.client.create_completion(
                         messages=messages_with_system,
                         tools=AVAILABLE_TOOLS,
-                        temperature=TEMPERATURE,
                     )
                 except Exception as e:
                     raise
@@ -493,19 +317,9 @@ class SimpleAgent:
         # Prepend system message for OpenRouter
         messages_with_system = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
         
-        # Apply prompt caching if enabled
-        messages_with_system = apply_cache_control(
-            messages_with_system,
-            enabled=PROMPT_CACHING_ENABLED,
-            ttl=PROMPT_CACHE_TTL
-        )
-        
         # Get summary from the model
-        response = self.client.chat.completions.create(
-            model=MODEL_NAME,
-            max_tokens=MAX_TOKENS,
+        response = self.client.create_completion(
             messages=messages_with_system,
-            temperature=TEMPERATURE
         )
         
         # Log usage with cache details
