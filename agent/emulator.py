@@ -146,6 +146,54 @@ class Emulator:
         # Reshape to group 2x2 blocks and take mean
         return arr.reshape(9, 2, 10, 2).mean(axis=(1, 3))
 
+    def get_sprites(self, debug=False):
+        """
+        Get the location of all of the sprites on the screen.
+        returns set of coordinates that are (column, row)
+        """
+        sprites_by_y = {}
+
+        for i in range(40):
+            sp = self.pyboy.get_sprite(i)
+            if sp.on_screen:
+                x = int(sp.x / 160 * 10)
+                y = int(sp.y / 144 * 9)
+                orig_y = sp.y
+
+                if orig_y not in sprites_by_y:
+                    sprites_by_y[orig_y] = []
+                sprites_by_y[orig_y].append((x, y, i))
+
+        y_positions = sorted(sprites_by_y.keys())
+        bottom_sprite_tiles = set()
+
+        if debug:
+            print("\nSprites grouped by original Y:")
+            for orig_y in y_positions:
+                sprites = sprites_by_y[orig_y]
+                print(f"Y={orig_y}:")
+                for x, grid_y, i in sprites:
+                    print(f"  Sprite {i}: x={x}, grid_y={grid_y}")
+
+        SPRITE_HEIGHT = 8
+
+        for i in range(len(y_positions) - 1):
+            y1 = y_positions[i]
+            y2 = y_positions[i + 1]
+
+            if y2 - y1 == SPRITE_HEIGHT:
+                sprites_at_y1 = {s[0]: s for s in sprites_by_y[y1]}
+                sprites_at_y2 = {s[0]: s for s in sprites_by_y[y2]}
+
+                for x in sprites_at_y2:
+                    if x in sprites_at_y1:
+                        bottom_sprite = sprites_at_y2[x]
+                        bottom_sprite_tiles.add((x, bottom_sprite[1]))
+                        if debug:
+                            print(f"\nMatched sprites at x={x}, Y1={y1}, Y2={y2}")
+
+        return bottom_sprite_tiles
+
     def get_collision_map(self):
         """
         Creates a simple ASCII map showing player position, direction, terrain and sprites.

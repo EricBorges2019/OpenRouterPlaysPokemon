@@ -53,44 +53,27 @@ class SimpleAgent:
             tool_input = json.loads(tool_call.function.arguments)
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error in {tool_name} at pos {e.pos}: {e.msg}")
-            logger.error(f"Failed to parse arguments: {repr(tool_call.function.arguments)}")
-            logger.error(f"Character at error position {e.pos}: {repr(tool_call.function.arguments[e.pos:e.pos+5])}")
-            
-            # WORKAROUND: Try to extract the last valid JSON object if multiple are concatenated
-            args_str = tool_call.function.arguments
-            logger.warning(f"Attempting to extract valid JSON from malformed arguments...")
-            
-            # Find all potential JSON objects by looking for }{ patterns (where objects are concatenated)
-            # Try to parse from the rightmost valid JSON object
-            potential_objects = []
-            depth = 0
-            start = -1
-            for i, char in enumerate(args_str):
-                if char == '{':
-                    if depth == 0:
-                        start = i
-                    depth += 1
-                elif char == '}':
-                    depth -= 1
-                    if depth == 0 and start != -1:
-                        try:
-                            obj = json.loads(args_str[start:i+1])
-                            potential_objects.append(obj)
-                        except json.JSONDecodeError:
-                            pass
-            
-            if potential_objects:
-                # Use the last valid object found (likely the most complete one)
-                tool_input = potential_objects[-1]
-                logger.warning(f"Successfully extracted JSON: {tool_input}")
-            else:
-                logger.error("Could not recover valid JSON from malformed arguments")
-                raise
-        
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_call.id,
+                "content": [
+                    {"type": "text", "text": f"Error parsing arguments: {e.msg}. Please fix your JSON formatting."}
+                ],
+            }
+
         logger.info(f"Processing tool call: {tool_name}")
 
         if tool_name == "press_buttons":
-            buttons = tool_input["buttons"]
+            buttons = tool_input.get("buttons", [])
+            if not buttons:
+                logger.warning(f"[Buttons] Empty buttons argument received, skipping")
+                return {
+                    "type": "tool_result",
+                    "tool_use_id": tool_call.id,
+                    "content": [
+                        {"type": "text", "text": "Error: No buttons specified. Please provide a list of buttons to press."}
+                    ],
+                }
             wait = tool_input.get("wait", True)
             logger.info(f"[Buttons] Pressing: {buttons} (wait={wait})")
             
