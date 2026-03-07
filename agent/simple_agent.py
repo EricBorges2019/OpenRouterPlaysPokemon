@@ -208,6 +208,11 @@ class SimpleAgent:
                     logger.info("Response usage: None")
 
                 # Extract tool calls and content from response
+                if not response or not hasattr(response, 'choices') or not response.choices:
+                    logger.error(f"Invalid response from LLM API: {response}")
+                    # Use a fallback empty response to keep loop going, or continue to retry
+                    continue
+                    
                 assistant_message = response.choices[0].message
                 tool_calls = assistant_message.tool_calls if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls else []
                 
