@@ -53,3 +53,5 @@ ENV/
 .runtime/
 .claude/commands/
 .logs/
+.beads/
+.gemini/
