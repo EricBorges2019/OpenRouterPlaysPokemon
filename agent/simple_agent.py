@@ -195,14 +195,17 @@ class SimpleAgent:
 
                 # Log usage with cache details
                 usage = response.usage
-                log_msg = f"Response usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
-                if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
-                    details = usage.prompt_tokens_details
-                    if hasattr(details, 'cached_tokens') and details.cached_tokens:
-                        log_msg += f", cached={details.cached_tokens}"
-                if hasattr(usage, 'cache_write_tokens') and usage.cache_write_tokens:
-                    log_msg += f", cache_write={usage.cache_write_tokens}"
-                logger.info(log_msg)
+                if usage:
+                    log_msg = f"Response usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
+                    if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+                        details = usage.prompt_tokens_details
+                        if hasattr(details, 'cached_tokens') and details.cached_tokens:
+                            log_msg += f", cached={details.cached_tokens}"
+                    if hasattr(usage, 'cache_write_tokens') and usage.cache_write_tokens:
+                        log_msg += f", cache_write={usage.cache_write_tokens}"
+                    logger.info(log_msg)
+                else:
+                    logger.info("Response usage: None")
 
                 # Extract tool calls and content from response
                 assistant_message = response.choices[0].message
@@ -307,14 +310,17 @@ class SimpleAgent:
         
         # Log usage with cache details
         usage = response.usage
-        log_msg = f"Summarization usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
-        if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
-            details = usage.prompt_tokens_details
-            if hasattr(details, 'cached_tokens') and details.cached_tokens:
-                log_msg += f", cached={details.cached_tokens}"
-        if hasattr(usage, 'cache_write_tokens') and usage.cache_write_tokens:
-            log_msg += f", cache_write={usage.cache_write_tokens}"
-        logger.info(log_msg)
+        if usage:
+            log_msg = f"Summarization usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
+            if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+                details = usage.prompt_tokens_details
+                if hasattr(details, 'cached_tokens') and details.cached_tokens:
+                    log_msg += f", cached={details.cached_tokens}"
+            if hasattr(usage, 'cache_write_tokens') and usage.cache_write_tokens:
+                log_msg += f", cache_write={usage.cache_write_tokens}"
+            logger.info(log_msg)
+        else:
+            logger.info("Summarization usage: None")
         
         # Extract the summary text
         summary_text = response.choices[0].message.content
