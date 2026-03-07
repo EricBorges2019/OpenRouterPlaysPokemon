@@ -94,7 +94,7 @@ class SimpleAgent:
             if collision_map:
                 logger.info(f"[Collision Map after action]\n{collision_map}")
             
-            # Return tool result as a dictionary
+            # Return tool result as a dictionary (OpenAI image format)
             return {
                 "type": "tool_result",
                 "tool_use_id": tool_call.id,
@@ -102,11 +102,9 @@ class SimpleAgent:
                     {"type": "text", "text": f"Pressed buttons: {', '.join(buttons)}"},
                     {"type": "text", "text": "\nHere is a screenshot of the screen after your button presses:"},
                     {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": screenshot_b64,
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{screenshot_b64}"
                         },
                     },
                     {"type": "text", "text": f"\nGame state information from memory after your action:\n{memory_info}"},
@@ -140,7 +138,7 @@ class SimpleAgent:
             if collision_map:
                 logger.info(f"[Collision Map after action]\n{collision_map}")
             
-            # Return tool result as a dictionary
+            # Return tool result as a dictionary (OpenAI image format)
             return {
                 "type": "tool_result",
                 "tool_use_id": tool_call.id,
@@ -148,11 +146,9 @@ class SimpleAgent:
                     {"type": "text", "text": f"Navigation result: {result}"},
                     {"type": "text", "text": "\nHere is a screenshot of the screen after navigation:"},
                     {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": screenshot_b64,
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{screenshot_b64}"
                         },
                     },
                     {"type": "text", "text": f"\nGame state information from memory after your action:\n{memory_info}"},
@@ -245,30 +241,42 @@ class SimpleAgent:
                     
                     # Process tool calls and create tool results
                     tool_messages = []
+                    screenshot_b64 = None
+                    memory_info = None
+                    
                     for tool_call in tool_calls:
                         tool_result = self.process_tool_call(tool_call)
-                        # Serialize tool result content properly
+                        # Extract text and screenshot from tool result
                         content_parts = tool_result["content"]
                         text_parts = []
-                        image_count = 0
                         for part in content_parts:
                             if part.get("type") == "text":
                                 text_parts.append(part["text"])
-                            elif part.get("type") == "image":
-                                image_count += 1
-                                # Get image data size for placeholder
-                                img_data = part.get("source", {}).get("data", "")
-                                text_parts.append(f"[Screenshot captured: {len(img_data)} bytes base64]")
+                            elif part.get("type") == "image_url":
+                                # Extract screenshot for later user message
+                                img_url = part.get("image_url", {}).get("url", "")
+                                if img_url.startswith("data:image/png;base64,"):
+                                    screenshot_b64 = img_url.replace("data:image/png;base64,", "")
                         
                         tool_messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
-                            "content": "\n".join(text_parts)
+                            "content": "\n".join(text_parts),
                         })
                     
                     # Add tool results to message history
                     for tool_msg in tool_messages:
                         self.message_history.append(tool_msg)
+                    
+                    # Send screenshot as user message so model can see it
+                    if screenshot_b64:
+                        self.message_history.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "Here is the current game state:"},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"}},
+                            ]
+                        })
 
                     # Check if we need to summarize the history
                     if len(self.message_history) >= self.max_history:
@@ -347,11 +355,9 @@ class SimpleAgent:
                         "text": "\n\nCurrent game screenshot for reference:"
                     },
                     {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": screenshot_b64,
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{screenshot_b64}"
                         },
                     },
                     {
