@@ -1,6 +1,7 @@
 # Configuration for the application
 MODEL_NAME = "google/gemini-2.0-flash-exp:free"
 TEMPERATURE = 1.0
+SUMMARY_TEMPERATURE = 0.3
 MAX_TOKENS = 10000
 
 USE_NAVIGATOR = False

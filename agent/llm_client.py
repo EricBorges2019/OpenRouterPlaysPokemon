@@ -72,7 +72,7 @@ class LLMClient:
 
         return messages
 
-    def create_completion(self, messages, tools=None):
+    def create_completion(self, messages, tools=None, temperature=None):
         # Note: messages should be a copy if the caller wants to preserve the original structure
         # (apply_cache_control modifies in-place)
         messages_with_cache = self.apply_cache_control(
@@ -85,5 +85,5 @@ class LLMClient:
             max_tokens=MAX_TOKENS,
             messages=messages_with_cache,
             tools=tools,
-            temperature=TEMPERATURE,
+            temperature=temperature if temperature is not None else TEMPERATURE,
         )

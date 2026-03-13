@@ -2,7 +2,7 @@ import copy
 import logging
 import os
 
-from config import MAX_TOKENS, MODEL_NAME, TEMPERATURE
+from config import MAX_TOKENS, MODEL_NAME, TEMPERATURE, SUMMARY_TEMPERATURE
 
 from agent.emulator import Emulator
 from agent.llm_client import LLMClient
@@ -319,6 +319,7 @@ class SimpleAgent:
         # Get summary from the model
         response = self.client.create_completion(
             messages=messages_with_system,
+            temperature=SUMMARY_TEMPERATURE,
         )
         
         # Log usage with cache details
